@@ -234,9 +234,7 @@ struct controller_impl {
     db( cfg.state_dir,
         cfg.read_only ? database::read_only : database::read_write,
         cfg.state_size, false, cfg.db_map_mode ),
-    kv_db(cfg.backing_store == backing_store_type::CHAINBASE
-          ? combined_database(db, cfg.persistent_storage_mbytes_batch)
-          : combined_database(db, cfg)), 
+    kv_db(combined_database(db, cfg.persistent_storage_mbytes_batch)),
     blog( cfg.blog ),
     fork_db( cfg.blog.log_dir / config::reversible_blocks_dir_name ),
     wasmif( cfg.wasm_runtime, cfg.eosvmoc_tierup, db, cfg.state_dir, cfg.eosvmoc_config, !cfg.profile_accounts.empty() ),
@@ -1113,7 +1111,7 @@ struct controller_impl {
             trace->account_ram_delta = account_delta( gtrx.payer, trx_removal_ram_delta );
             emit( self.accepted_transaction, trx );
             emit( self.applied_transaction, std::tie(trace, trx->packed_trx()) );
-            undo_session.squash();
+            //undo_session.squash();
             return trace;
          }
          trace->elapsed = fc::time_point::now() - trx_context.start;
@@ -1155,7 +1153,7 @@ struct controller_impl {
          emit( self.accepted_transaction, trx );
          emit( self.applied_transaction, std::tie(trace, trx->packed_trx()) );
 
-         undo_session.squash();
+         //undo_session.squash();
       } else {
          emit( self.accepted_transaction, trx );
          emit( self.applied_transaction, std::tie(trace, trx->packed_trx()) );

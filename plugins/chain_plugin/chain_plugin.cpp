@@ -305,19 +305,6 @@ void chain_plugin::set_program_options(options_description& cli, options_descrip
           "Override default maximum ABI serialization time allowed in ms")
          ("chain-state-db-size-mb", bpo::value<uint64_t>()->default_value(config::default_state_size / (1024  * 1024)), "Maximum size (in MiB) of the chain state database")
          ("chain-state-db-guard-size-mb", bpo::value<uint64_t>()->default_value(config::default_state_guard_size / (1024  * 1024)), "Safely shut down node when free space remaining in the chain state database drops below this size (in MiB).")
-         ("backing-store", boost::program_options::value<eosio::chain::backing_store_type>()->default_value(eosio::chain::backing_store_type::CHAINBASE),
-          "The storage for state, chainbase or rocksdb")
-         ("persistent-storage-num-threads", bpo::value<uint16_t>()->default_value(default_persistent_storage_num_threads),
-          "Number of rocksdb threads for flush and compaction")
-         ("persistent-storage-max-num-files", bpo::value<int>()->default_value(config::default_persistent_storage_max_num_files),
-          "Max number of rocksdb files to keep open. -1 = unlimited.")
-         ("persistent-storage-write-buffer-size-mb", bpo::value<uint64_t>()->default_value(config::default_persistent_storage_write_buffer_size / (1024  * 1024)),
-          "Size of a single rocksdb memtable (in MiB)")
-         ("persistent-storage-bytes-per-sync", bpo::value<uint64_t>()->default_value(config::default_persistent_storage_bytes_per_sync),
-          "Rocksdb write rate of flushes and compactions.")
-         ("persistent-storage-mbytes-snapshot-batch", bpo::value<uint32_t>()->default_value(config::default_persistent_storage_mbytes_batch),
-          "Rocksdb batch size threshold before writing read in snapshot data to database.")
-
          ("reversible-blocks-db-size-mb", bpo::value<uint64_t>()->default_value(0),
           "(DEPRECATED: no longer used) Maximum size (in MiB) of the reversible blocks database")
          ("reversible-blocks-db-guard-size-mb", bpo::value<uint64_t>()->default_value(0),
@@ -856,36 +843,6 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
 
       if( options.count( "chain-state-db-guard-size-mb" ))
          my->chain_config->state_guard_size = options.at( "chain-state-db-guard-size-mb" ).as<uint64_t>() * 1024 * 1024;
-
-      my->chain_config->backing_store = options.at( "backing-store" ).as<backing_store_type>();
-
-      if( options.count( "persistent-storage-num-threads" )) {
-         my->chain_config->persistent_storage_num_threads = options.at( "persistent-storage-num-threads" ).as<uint16_t>();
-         EOS_ASSERT( my->chain_config->persistent_storage_num_threads > 0, plugin_config_exception,
-                     "persistent-storage-num-threads ${num} must be greater than 0", ("num", my->chain_config->persistent_storage_num_threads) );
-      }
-
-      if( options.count( "persistent-storage-max-num-files" )) {
-         my->chain_config->persistent_storage_max_num_files = options.at( "persistent-storage-max-num-files" ).as<int>();
-         EOS_ASSERT( my->chain_config->persistent_storage_max_num_files == -1 || my->chain_config->persistent_storage_max_num_files > 0, plugin_config_exception,
-                     "persistent-storage-max-num-files ${num} must be equal to -1 or be greater than 0", ("num", my->chain_config->persistent_storage_max_num_files) );
-      }
-
-      if( options.count( "persistent-storage-write-buffer-size-mb" )) {
-         my->chain_config->persistent_storage_write_buffer_size = options.at( "persistent-storage-write-buffer-size-mb" ).as<uint64_t>() * 1024 * 1024;
-         EOS_ASSERT( my->chain_config->persistent_storage_write_buffer_size > 0, plugin_config_exception,
-                     "persistent-storage-write-buffer-size-mb ${num} must be greater than 0", ("num", my->chain_config->persistent_storage_write_buffer_size) );
-      }
-
-      if( options.count( "persistent-storage-bytes-per-sync" )) {
-         my->chain_config->persistent_storage_bytes_per_sync = options.at( "persistent-storage-bytes-per-sync" ).as<uint64_t>();
-         EOS_ASSERT( my->chain_config->persistent_storage_bytes_per_sync > 0, plugin_config_exception,
-                     "persistent-storage-bytes-per-sync ${num} must be greater than 0", ("num", my->chain_config->persistent_storage_bytes_per_sync) );
-      }
-
-      my->chain_config->persistent_storage_mbytes_batch = options.at( "persistent-storage-mbytes-snapshot-batch" ).as<uint32_t>();
-      EOS_ASSERT( my->chain_config->persistent_storage_mbytes_batch > 0, plugin_config_exception,
-                  "persistent-storage-mbytes-snapshot-batch ${num} must be greater than 0", ("num", my->chain_config->persistent_storage_mbytes_batch) );
 
       if( options.count( "reversible-blocks-db-size-mb" ))
          wlog( "reversible-blocks-db-size-mb deprecated and will be removed in future version" );
@@ -2308,58 +2265,31 @@ read_only::get_table_by_scope_result read_only::get_table_by_scope( const read_o
 
    const bool reverse = p.reverse && *p.reverse;
    const auto db_backing_store = get_backing_store();
-   if (db_backing_store == eosio::chain::backing_store_type::CHAINBASE) {
-      auto walk_table_range = [&result,&p]( auto itr, auto end_itr ) {
-         keep_processing kp;
-         for( unsigned int count = 0; kp() && count < p.limit && itr != end_itr; ++itr ) {
-            if( p.table && itr->table != p.table ) continue;
+   EOS_ASSERT(db_backing_store == backing_store_type::CHAINBASE,
+               chain::contract_table_query_exception,
+               "Support for configured backing_store has not been added to get_table_by_scope");
+   auto walk_table_range = [&result,&p]( auto itr, auto end_itr ) {
+      keep_processing kp;
+      for( unsigned int count = 0; kp() && count < p.limit && itr != end_itr; ++itr ) {
+         if( p.table && itr->table != p.table ) continue;
 
-            result.rows.push_back( {itr->code, itr->scope, itr->table, itr->payer, itr->count} );
+         result.rows.push_back( {itr->code, itr->scope, itr->table, itr->payer, itr->count} );
 
-            ++count;
-         }
-         if( itr != end_itr ) {
-            result.more = itr->scope.to_string();
-         }
-      };
+         ++count;
+      }
+      if( itr != end_itr ) {
+         result.more = itr->scope.to_string();
+      }
+   };
 
-      const auto& d = db.db();
-      const auto& idx = d.get_index<chain::table_id_multi_index, chain::by_code_scope_table>();
-      auto lower = idx.lower_bound( lower_bound_lookup_tuple );
-      auto upper = idx.upper_bound( upper_bound_lookup_tuple );
-      if( reverse ) {
-         walk_table_range( boost::make_reverse_iterator(upper), boost::make_reverse_iterator(lower) );
-      } else {
-         walk_table_range( lower, upper );
-      }
-   }
-   else {
-      using namespace eosio::chain;
-      EOS_ASSERT(db_backing_store == backing_store_type::ROCKSDB,
-                 chain::contract_table_query_exception,
-                 "Support for configured backing_store has not been added to get_table_by_scope");
-      const auto& kv_database = db.kv_db();
-      table_receiver receiver(result, p);
-      auto kp = receiver.keep_processing_entries();
-      auto lower = chain::backing_store::db_key_value_format::create_full_prefix_key(std::get<0>(lower_bound_lookup_tuple),
-                                                                                     std::get<1>(lower_bound_lookup_tuple),
-                                                                                     std::get<2>(lower_bound_lookup_tuple));
-      auto upper = chain::backing_store::db_key_value_format::create_full_prefix_key(std::get<0>(upper_bound_lookup_tuple),
-                                                                                     std::get<1>(upper_bound_lookup_tuple),
-                                                                                     std::get<2>(upper_bound_lookup_tuple));
-      if (reverse) {
-         lower = eosio::session::shared_bytes::truncate_key(lower);
-      }
-      // since upper is either the upper_bound of a forward search, or the reverse iterator <= for the beginning of the end of
-      // the table, we need to move it to just before the beginning of the next table
-      upper = upper.next();
-      const auto context = (reverse) ? backing_store::key_context::table_only_reverse : backing_store::key_context::table_only;
-      backing_store::rocksdb_contract_db_table_writer<table_receiver, std::decay_t < decltype(kp)>> writer(receiver, context, kp);
-      eosio::chain::backing_store::walk_rocksdb_entries_with_prefix(kv_database.get_kv_undo_stack(), lower, upper, writer);
-      const auto stopped_at = writer.stopped_at();
-      if (stopped_at) {
-         result.more = stopped_at->scope.to_string();
-      }
+   const auto& d = db.db();
+   const auto& idx = d.get_index<chain::table_id_multi_index, chain::by_code_scope_table>();
+   auto lower = idx.lower_bound( lower_bound_lookup_tuple );
+   auto upper = idx.upper_bound( upper_bound_lookup_tuple );
+   if( reverse ) {
+      walk_table_range( boost::make_reverse_iterator(upper), boost::make_reverse_iterator(lower) );
+   } else {
+      walk_table_range( lower, upper );
    }
 
    return result;
@@ -2449,101 +2379,35 @@ read_only::get_producers_result read_only::get_producers( const read_only::get_p
    const name sec_producers_table {producers_table.to_uint64_t() | secondary_index_num};
 
    const auto db_backing_store = get_backing_store();
-   if (db_backing_store == eosio::chain::backing_store_type::CHAINBASE) {
-      const auto* const table_id = d.find<chain::table_id_object, chain::by_code_scope_table>(
-            boost::make_tuple(code, scope, producers_table));
-      const auto* const secondary_table_id = d.find<chain::table_id_object, chain::by_code_scope_table>(
-            boost::make_tuple(code, scope, sec_producers_table));
-      EOS_ASSERT(table_id && secondary_table_id, chain::contract_table_query_exception, "Missing producers table");
+   EOS_ASSERT(db_backing_store == backing_store_type::CHAINBASE,
+            contract_table_query_exception,
+            "Support for configured backing_store has not been added to get_table_by_scope");
+   const auto* const table_id = d.find<chain::table_id_object, chain::by_code_scope_table>(
+         boost::make_tuple(code, scope, producers_table));
+   const auto* const secondary_table_id = d.find<chain::table_id_object, chain::by_code_scope_table>(
+         boost::make_tuple(code, scope, sec_producers_table));
+   EOS_ASSERT(table_id && secondary_table_id, chain::contract_table_query_exception, "Missing producers table");
 
-      const auto& kv_index = d.get_index<key_value_index, by_scope_primary>();
-      const auto& secondary_index = d.get_index<index_double_index>().indices();
-      const auto& secondary_index_by_primary = secondary_index.get<by_primary>();
-      const auto& secondary_index_by_secondary = secondary_index.get<by_secondary>();
+   const auto& kv_index = d.get_index<key_value_index, by_scope_primary>();
+   const auto& secondary_index = d.get_index<index_double_index>().indices();
+   const auto& secondary_index_by_primary = secondary_index.get<by_primary>();
+   const auto& secondary_index_by_secondary = secondary_index.get<by_secondary>();
 
-      vector<char> data;
+   vector<char> data;
 
-      auto it = lower.to_uint64_t() == 0
-         ? secondary_index_by_secondary.lower_bound(
-               boost::make_tuple(secondary_table_id->id, to_softfloat64(std::numeric_limits<double>::lowest()), 0))
-         : secondary_index.project<by_secondary>(
-               secondary_index_by_primary.lower_bound(
-                  boost::make_tuple(secondary_table_id->id, lower.to_uint64_t())));
-      for( ; it != secondary_index_by_secondary.end() && it->t_id == secondary_table_id->id; ++it ) {
-         if (done(*it)) {
-            break;
-         }
-         auto itr = kv_index.find(boost::make_tuple(table_id->id, it->primary_key));
-         add_val(*itr);
+   auto it = lower.to_uint64_t() == 0
+      ? secondary_index_by_secondary.lower_bound(
+            boost::make_tuple(secondary_table_id->id, to_softfloat64(std::numeric_limits<double>::lowest()), 0))
+      : secondary_index.project<by_secondary>(
+            secondary_index_by_primary.lower_bound(
+               boost::make_tuple(secondary_table_id->id, lower.to_uint64_t())));
+   for( ; it != secondary_index_by_secondary.end() && it->t_id == secondary_table_id->id; ++it ) {
+      if (done(*it)) {
+         break;
       }
+      auto itr = kv_index.find(boost::make_tuple(table_id->id, it->primary_key));
+      add_val(*itr);
    }
-   else {
-      using namespace eosio::chain;
-      EOS_ASSERT(db_backing_store == backing_store_type::ROCKSDB,
-                 contract_table_query_exception,
-                 "Support for configured backing_store has not been added to get_table_by_scope");
-      const auto& kv_database = db.kv_db();
-      using key_type = backing_store::db_key_value_format::key_type;
-
-      // derive the "root" of the float64 secondary key space to determine where it ends (upper), then may need to recalculate
-      auto lower_key = backing_store::db_key_value_format::create_full_prefix_key(code, scope, sec_producers_table, key_type::sec_double);
-      auto upper_key = lower_key.next();
-      if (lower.to_uint64_t() == 0) {
-         lower_key = backing_store::db_key_value_format::create_full_prefix_secondary_key(code, scope, sec_producers_table, float64_t{lower.to_uint64_t()});
-      }
-
-      auto session = kv_database.get_kv_undo_stack()->top();
-      auto retrieve_primary_key = [&code,&scope,&producers_table,&session](uint64_t primary_key) {
-         auto full_primary_key = backing_store::db_key_value_format::create_full_primary_key(code, scope, producers_table, primary_key);
-         auto value = session.read(full_primary_key);
-         return *value;
-      };
-
-      using done_func = decltype(done);
-      using add_val_func = decltype(add_val);
-      using retrieve_prim_func = decltype(retrieve_primary_key);
-
-      struct f64_secondary_key_receiver
-      : backing_store::single_type_error_receiver<f64_secondary_key_receiver,
-                                                  backing_store::secondary_index_view<float64_t>,
-                                                  contract_table_query_exception> {
-         f64_secondary_key_receiver(read_only::get_producers_result& result, done_func&& done,
-                                    add_val_func&& add_val, retrieve_prim_func&& retrieve_prim)
-         : result_(result), done_(done), add_val_(add_val), retrieve_primary_key_(retrieve_prim) {}
-
-         void add_only_row(const backing_store::secondary_index_view<float64_t>& row) {
-            // needs to allow a second pass after limit is reached or time has passed, to allow "more" processing
-            if (done_(row)) {
-               finished_ = true;
-            }
-            else {
-               auto value = retrieve_primary_key_(row.primary_key);
-               add_val_(backing_store::primary_index_view::create(row.primary_key, value.data(), value.size()));
-            }
-         }
-
-         void add_table_row(const backing_store::table_id_object_view& ) {
-            // used for only one table, so we already know the context of the table
-         }
-
-         auto keep_processing_entries() {
-            return [&finished=finished_]() {
-               return !finished;
-            };
-         };
-
-         read_only::get_producers_result& result_;
-         done_func done_;
-         add_val_func add_val_;
-         retrieve_prim_func retrieve_primary_key_;
-         bool finished_ = false;
-      };
-      f64_secondary_key_receiver receiver(result, std::move(done), std::move(add_val), std::move(retrieve_primary_key));
-      auto kpe = receiver.keep_processing_entries();
-      backing_store::rocksdb_contract_db_table_writer<f64_secondary_key_receiver, std::decay_t < decltype(kpe)>>
-         writer(receiver, backing_store::key_context::standalone, kpe);
-      eosio::chain::backing_store::walk_rocksdb_entries_with_prefix(kv_database.get_kv_undo_stack(), lower_key, upper_key, writer);
-   };
 
    constexpr name global = "global"_n;
    const auto global_table_type = get_table_type(abi, global);

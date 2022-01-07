@@ -36,9 +36,6 @@
    }
 
 namespace eosio { namespace chain {
-   using rocks_db_type = eosio::session::session<eosio::session::rocksdb_t>;
-   using session_type = eosio::session::session<rocks_db_type>;
-   using kv_undo_stack_ptr = std::unique_ptr<eosio::session::undo_stack<rocks_db_type>>;
 
    using controller_index_set =
          index_set<account_index, account_metadata_index, account_ram_correction_index, global_property_multi_index,
@@ -60,8 +57,7 @@ namespace eosio { namespace chain {
     public:
       combined_session() = default;
 
-      combined_session(chainbase::database& cb_database, eosio::session::undo_stack<rocks_db_type>* undo_stack);
-
+      combined_session(chainbase::database& cb_database);
       combined_session(combined_session&& src) noexcept;
 
       ~combined_session() { undo(); }
@@ -76,16 +72,12 @@ namespace eosio { namespace chain {
 
     private:
       std::unique_ptr<chainbase::database::session> cb_session    = {};
-      eosio::session::undo_stack<rocks_db_type>*     kv_undo_stack = nullptr;
    };
 
    class combined_database {
     public:
       explicit combined_database(chainbase::database& chain_db,
                                  uint32_t snapshot_batch_threashold);
-
-      combined_database(chainbase::database& chain_db,
-                        const controller::config& cfg);
 
       combined_database(const combined_database& copy) = delete;
       combined_database& operator=(const combined_database& copy) = delete;
@@ -96,9 +88,9 @@ namespace eosio { namespace chain {
       void check_backing_store_setting(bool clean_startup);
 
       static combined_session make_no_op_session() { return combined_session(); }
-
+      
       combined_session make_session() {
-         return combined_session(db, kv_undo_stack.get());
+         return combined_session(db);
       }
 
       void set_revision(uint64_t revision);
@@ -129,7 +121,6 @@ namespace eosio { namespace chain {
                               const eosio::chain::chain_id_type& chain_id);
 
       auto &get_db(void) const { return db; }
-      auto &get_kv_undo_stack(void) const { return kv_undo_stack; }
       backing_store_type get_backing_store() const { return backing_store; }
 
     private:
@@ -138,14 +129,10 @@ namespace eosio { namespace chain {
 
       backing_store_type                                         backing_store;
       chainbase::database&                                       db;
-      std::unique_ptr<rocks_db_type>                             kv_database;
-      kv_undo_stack_ptr                                          kv_undo_stack;
-      const uint64_t                                             kv_snapshot_batch_threashold;
    };
 
    std::optional<eosio::chain::genesis_state> extract_legacy_genesis_state(snapshot_reader& snapshot, uint32_t version);
 
    std::vector<char> make_rocksdb_contract_kv_prefix();
    char make_rocksdb_contract_db_prefix();
-
 }} // namespace eosio::chain
