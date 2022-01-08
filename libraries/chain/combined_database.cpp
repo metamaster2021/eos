@@ -56,7 +56,9 @@ namespace eosio { namespace chain {
       });
    }
 
-   void read_kv_table_from_snapshot(const snapshot_reader_ptr& snapshot, chainbase::database& db) {
+   void read_kv_table_from_snapshot(const snapshot_reader_ptr& snapshot, chainbase::database& db, uint32_t version) {
+      if (version < kv_object::minimum_snapshot_version)
+         return;
       snapshot->read_section<kv_object>([&db](auto& section) {
          bool more = !section.empty();
          while (more) {
@@ -257,7 +259,7 @@ namespace eosio { namespace chain {
          });
       });
 
-      read_kv_table_from_snapshot(snapshot, db);
+      read_kv_table_from_snapshot(snapshot, db, header.version);
       read_contract_tables_from_snapshot(snapshot);
 
       authorization.read_from_snapshot(snapshot);
@@ -334,75 +336,6 @@ namespace eosio { namespace chain {
          });
       }
    }
-
-   // template <typename Section>
-   // void rocksdb_read_contract_tables_from_snapshot(rocks_db_type& kv_database, chainbase::database& db,
-   //                                                 Section& section, uint64_t snapshot_batch_threashold) {
-   //    std::vector<std::pair<eosio::session::shared_bytes, eosio::session::shared_bytes>> batch;
-   //    bool                more     = !section.empty();
-   //    auto                read_row = [&section, &more, &db](auto& row) { more = section.read_row(row, db); };
-   //    uint64_t            batch_mem_size = 0;
-
-   //    while (more) {
-   //       // read the row for the table
-   //       backing_store::table_id_object_view table_obj;
-   //       read_row(table_obj);
-   //       auto put = [&batch, &table_obj, &batch_mem_size, &kv_database, snapshot_batch_threashold]
-   //             (auto&& value, auto create_fun, auto&&... args) {
-   //          auto composite_key = create_fun(table_obj.scope, table_obj.table, std::forward<decltype(args)>(args)...);
-   //          batch.emplace_back(backing_store::db_key_value_format::create_full_key(composite_key, table_obj.code),
-   //                             std::forward<decltype(value)>(value));
-
-   //          const auto& back = batch.back();
-   //          const auto size = back.first.size() + back.second.size();
-   //          if (size >= snapshot_batch_threashold || snapshot_batch_threashold - size < batch_mem_size) {
-   //             kv_database.write(batch);
-   //             batch_mem_size = 0;
-   //             batch.clear();
-   //          }
-   //          else {
-   //             batch_mem_size += size;
-   //          }
-   //       };
-
-   //       // handle the primary key index
-   //       unsigned_int size;
-   //       read_row(size);
-   //       for (size_t i = 0; i < size.value; ++i) {
-   //          backing_store::primary_index_view row;
-   //          read_row(row);
-   //          backing_store::payer_payload pp{row.payer, row.value.data(), row.value.size()};
-   //          put(pp.as_payload(), backing_store::db_key_value_format::create_primary_key, row.primary_key);
-   //       }
-
-   //       auto write_secondary_index = [&put, &read_row](auto index) {
-   //          using index_t = decltype(index);
-   //          static const eosio::session::shared_bytes  empty_payload;
-   //          unsigned_int       size;
-   //          read_row(size);
-   //          for (uint32_t i = 0; i < size.value; ++i) {
-   //             backing_store::secondary_index_view<index_t> row;
-   //             read_row(row);
-   //             backing_store::payer_payload pp{row.payer, nullptr, 0};
-   //             put(pp.as_payload(), &backing_store::db_key_value_format::create_secondary_key<index_t>,
-   //                 row.secondary_key, row.primary_key);
-
-   //             put(empty_payload, &backing_store::db_key_value_format::create_primary_to_secondary_key<index_t>,
-   //                 row.primary_key, row.secondary_key);
-   //          }
-   //       };
-
-   //       // handle secondary key indices
-   //       std::tuple<uint64_t, uint128_t, key256_t, float64_t, float128_t> indices;
-   //       std::apply([&write_secondary_index](auto... index) { (write_secondary_index(index), ...); }, indices);
-
-   //       backing_store::payer_payload pp{table_obj.payer, nullptr, 0};
-   //       b1::chain_kv::bytes (*create_table_key)(name scope, name table) = backing_store::db_key_value_format::create_table_key;
-   //       put(pp.as_payload(), create_table_key);
-
-   //    }
-   //    kv_database.write(batch);
-   // }
 
    void combined_database::read_contract_tables_from_snapshot(const snapshot_reader_ptr& snapshot) {
       snapshot->read_section("contract_tables", [this](auto& section) {
