@@ -1111,7 +1111,7 @@ struct controller_impl {
             trace->account_ram_delta = account_delta( gtrx.payer, trx_removal_ram_delta );
             emit( self.accepted_transaction, trx );
             emit( self.applied_transaction, std::tie(trace, trx->packed_trx()) );
-            //undo_session.squash();
+            undo_session.squash();
             return trace;
          }
          trace->elapsed = fc::time_point::now() - trx_context.start;
@@ -1153,7 +1153,7 @@ struct controller_impl {
          emit( self.accepted_transaction, trx );
          emit( self.applied_transaction, std::tie(trace, trx->packed_trx()) );
 
-         //undo_session.squash();
+         undo_session.squash();
       } else {
          emit( self.accepted_transaction, trx );
          emit( self.applied_transaction, std::tie(trace, trx->packed_trx()) );
